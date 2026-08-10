@@ -126,7 +126,7 @@ def rename_amended_entries():
         if amendment.name == new_name:
             continue
 
-        # print(f"Renaming {amendment.name} -> {new_name}")
+        print(f"Renaming {amendment.name} -> {new_name}")
 
         try:
             rename_doc(
