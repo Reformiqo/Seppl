@@ -70,7 +70,7 @@ class TestSalesInvoiceGatePassLink(IntegrationTestCase):
 		self.assertIsNotNone(
 			cf,
 			"Custom Field 'custom_gate_pass' missing on Sales Invoice Item. "
-			"Did seppl.setup.create_custom_fields run after migrate?",
+			"Did seppl/fixtures/custom_field.json sync on migrate?",
 		)
 		self.assertEqual(cf.fieldtype, "Link")
 		self.assertEqual(
