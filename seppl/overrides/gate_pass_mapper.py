@@ -27,8 +27,19 @@ GATE_PASS_TO_SALES_INVOICE = (
 
 
 @frappe.whitelist()
-def map_docs(method, source_names, target_doc=None, args=None):
-	"""Core `map_docs`, plus a Gate Pass stamp on the rows it produces."""
+def map_docs(
+	method: str,
+	source_names: str,
+	target_doc: str | None = None,
+	args: str | None = None,
+):
+	"""Core `map_docs`, plus a Gate Pass stamp on the rows it produces.
+
+	Hints mirror what actually arrives over the wire — the picker's
+	`frappe.call` JSON-encodes every argument, so `source_names` is a JSON
+	array string and `target_doc` / `args` are JSON object strings. Direct
+	Python callers may still pass a real list; the body tolerates both.
+	"""
 	if method != GATE_PASS_TO_SALES_INVOICE:
 		return _core_map_docs(method, source_names, target_doc, args)
 
