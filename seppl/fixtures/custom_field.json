@@ -10,7 +10,7 @@
   "columns": 0,
   "default": null,
   "depends_on": null,
-  "description": "Source Gate Pass for this row \u2014 stamped when the invoice is built via Get Items From \u2192 Gate Pass.",
+  "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
   "dt": "Sales Invoice Item",
