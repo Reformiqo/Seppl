@@ -82,6 +82,22 @@ app_license = "mit"
 # 	"filters": "seppl.utils.jinja_filters"
 # }
 
+# Fixtures
+# --------
+# Customisations built for the SEPPL site are tagged with the "Seppl"
+# module so `bench export-fixtures` picks them up here rather than into
+# whichever app happens to own the doctype.
+#
+# This list is the single source of truth for SEPPL's schema: build the
+# field in the UI, set its Module to "Seppl", run `bench export-fixtures`
+# and commit the JSON. Do NOT also declare the same field in Python —
+# after_migrate runs AFTER the fixture sync, so a code definition would
+# silently overwrite whatever was last exported.
+
+fixtures = [
+	{"dt": "Custom Field", "filters": [["module", "=", "Seppl"]]},
+]
+
 # Installation
 # ------------
 
@@ -138,13 +154,20 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Sales Invoice": {
+		# Resolve a Gate Pass for any row that carries a Manifest No but
+		# no Gate Pass yet — invoices predating the picker stamp, or an
+		# ERPNext release that maps through some other core method.
+		"before_validate": "seppl.overrides.sales_invoice.before_validate",
+		# Back-link every Gate Pass billed here as soon as the DRAFT is
+		# saved, not only at submit: the picker hides Gate Passes that
+		# already carry a sales_invoice, so linking at save time is what
+		# stops the same Gate Pass being pulled into a second draft.
+		# Frappe runs on_update before on_submit, so submit is covered.
+		"on_update": "seppl.overrides.sales_invoice.on_update",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
@@ -182,10 +205,17 @@ app_license = "mit"
 
 # Overriding Methods
 # ------------------------------
-#
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "seppl.event.get_events"
-# }
+
+# The "Get Items From → Gate Pass" picker on Sales Invoice posts to core's
+# `map_docs`, which loops the selected Gate Passes through the mapper one
+# at a time. Wrapping it is how SEPPL gets inside that loop to stamp the
+# source Gate Pass on each mapped row — the mapper itself belongs to
+# detox_waste_management and is not ours to edit. Every other mapping on
+# the site is handed straight back to the core implementation.
+override_whitelisted_methods = {
+	"frappe.model.mapper.map_docs": "seppl.overrides.gate_pass_mapper.map_docs",
+}
+
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
@@ -255,4 +285,3 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
