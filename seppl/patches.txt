@@ -5,3 +5,4 @@
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 seppl.patches.payment_entry_renumber_by_type #2
+seppl.patches.backfill_sales_invoice_gate_pass
