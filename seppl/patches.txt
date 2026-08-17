@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 seppl.patches.payment_entry_renumber_by_type #2
 seppl.patches.backfill_sales_invoice_gate_pass
+seppl.patches.backfill_twe_blank_pan
