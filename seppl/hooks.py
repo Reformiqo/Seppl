@@ -155,6 +155,11 @@ fixtures = [
 # Hook on document methods and events
 
 doc_events = {
+	# Submitting a Waste Inward is the moment its date becomes known; that
+	# is when it gets stamped onto the Gate Pass's service rows.
+	"Waste Inward": {
+		"on_submit": "seppl.overrides.waste_inward.on_submit",
+	},
 	"Sales Invoice": {
 		# Resolve a Gate Pass for any row that carries a Manifest No but
 		# no Gate Pass yet — invoices predating the picker stamp, or an
@@ -209,11 +214,16 @@ doc_events = {
 # The "Get Items From → Gate Pass" picker on Sales Invoice posts to core's
 # `map_docs`, which loops the selected Gate Passes through the mapper one
 # at a time. Wrapping it is how SEPPL gets inside that loop to stamp the
-# source Gate Pass on each mapped row — the mapper itself belongs to
-# detox_waste_management and is not ours to edit. Every other mapping on
-# the site is handed straight back to the core implementation.
+# source Gate Pass on each mapped row AND to bill the Gate Pass's service
+# items — the mapper itself belongs to detox_waste_management and is not
+# ours to edit. Every other mapping on the site is handed straight back to
+# the core implementation.
 override_whitelisted_methods = {
 	"frappe.model.mapper.map_docs": "seppl.overrides.gate_pass_mapper.map_docs",
+	# Gate Pass → Create → Sales Invoice calls the SALES ORDER mapper, not
+	# the Gate Pass one, so the Gate Pass's service charges never reach the
+	# invoice. Wrapping it adds them. See seppl/overrides/sales_order.py.
+	"erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice": "seppl.overrides.sales_order.make_sales_invoice",
 }
 
 #
