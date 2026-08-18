@@ -44,9 +44,8 @@ def add_service_charges(target, gate_pass):
 	if not rows:
 		return
 
-	manifest_no = frappe.db.get_value("Gate Pass", gate_pass, "custom_manifest_no")
 	for row in rows:
-		target.append("items", service_invoice_row(row, gate_pass, manifest_no))
+		target.append("items", service_invoice_row(row, gate_pass))
 
 	# The rows arrive after the mapper has already run these, so the new
 	# ones would otherwise carry no income account, no tax template and no
@@ -56,7 +55,7 @@ def add_service_charges(target, gate_pass):
 	target.run_method("calculate_taxes_and_totals")
 
 
-def service_invoice_row(row, gate_pass, manifest_no):
+def service_invoice_row(row, gate_pass):
 	print(row, "rows")
 
 	qty = flt(row.custom_confirm_qty) or flt(row.qty)
@@ -69,6 +68,6 @@ def service_invoice_row(row, gate_pass, manifest_no):
 		# What makes `seppl.overrides.sales_invoice` back-link the Gate Pass
 		# on save, which is also what keeps it out of the next invoice.
 		"custom_gate_pass": gate_pass,
-		"custom_manifest_no": manifest_no,
+		"custom_manifest_no": row.custom_manifest_no,
 		"custom_waste_inward_date" : row.custom_waste_inward_date
 	}

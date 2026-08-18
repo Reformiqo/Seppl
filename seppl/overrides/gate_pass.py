@@ -3,7 +3,7 @@ import frappe
 SERVICE_ITEMS_FIELD = "custom_service_items"
 
 
-def service_rows(gate_pass, fields=("name", "item_code", "qty", "custom_confirm_qty", "uom", "rate", "custom_waste_inward_date")):
+def service_rows(gate_pass, fields=("name", "item_code", "qty", "custom_confirm_qty", "uom", "rate", "custom_waste_inward_date", "custom_manifest_no")):
 	"""A saved Gate Pass's service rows.
 
 	Filtered on `parentfield`, not `parenttype`: `parenttype` is "Gate
