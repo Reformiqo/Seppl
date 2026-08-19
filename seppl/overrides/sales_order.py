@@ -44,8 +44,36 @@ def make_sales_invoice(source_name, target_doc=None, args=None, ignore_permissio
 	if not gate_pass:
 		return target
 
+	stamp_gate_pass_on_mapped_rows(target, gate_pass)
 	add_service_charges(target, gate_pass)
 	return target
+
+
+def stamp_gate_pass_on_mapped_rows(target, gate_pass):
+	source = frappe.db.get_value(
+		"Gate Pass", gate_pass, ["manifest_no", "sales_order"], as_dict=True
+	)
+	if not source:
+		return
+
+	inward_date = frappe.db.get_value(
+		"Gate Pass Item",
+		{
+			"parent": gate_pass,
+			"parentfield": "items",
+			"custom_waste_inward_date": ("is", "set"),
+		},
+		"custom_waste_inward_date",
+	)
+	for row in target.get("items") or []:
+		# Never overwrite a row that already names its own Gate Pass.
+		if row.get("custom_gate_pass"):
+			continue
+		row.custom_gate_pass = gate_pass
+		if source.manifest_no:
+			row.custom_manifest_no = source.manifest_no
+		if inward_date:
+			row.custom_waste_inward_date = inward_date
 
 
 def add_service_charges(target, gate_pass):
