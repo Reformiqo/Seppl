@@ -104,7 +104,7 @@
   "name": "Gate Pass-custom_service_items",
   "no_copy": 0,
   "non_negative": 0,
-  "options": "Gate Pass Item",
+  "options": "Gate Pass Service Item",
   "permlevel": 0,
   "placeholder": null,
   "precision": "",
