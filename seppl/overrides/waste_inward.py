@@ -3,7 +3,7 @@
 A service row is billed alongside the waste it was raised with, so it has
 to carry the same Waste Inward date the waste rows do — the Sales Invoice
 picker grid, the ZWR reports and the print formats all read
-`custom_waste_inward_date` off the row.
+`waste_inward_posting_date` off the row.
 
 detox fills that field on the waste table (`overrides.gate_pass.
 populate_waste_inward_date_on_items`, on Gate Pass validate). That hook
@@ -19,6 +19,8 @@ the parent Gate Pass is submitted, so a normal save would be rejected.
 import frappe
 from frappe.utils import getdate
 
+from seppl.overrides.gate_pass import SERVICE_ITEM_DOCTYPE, SERVICE_ITEMS_FIELD
+
 
 def on_submit(doc, method=None):
 	stamp_inward_date_on_service_items(doc)
@@ -29,9 +31,13 @@ def stamp_inward_date_on_service_items(doc):
 	if not doc.get("gate_pass") or not doc.get("date"):
 		return
 	inward_date = getdate(doc.date)
-	service_items = frappe.get_all("Gate Pass Item", filters={"parent": doc.gate_pass, "parentfield": "custom_service_items"}, pluck="name")
+	service_items = frappe.get_all(
+		SERVICE_ITEM_DOCTYPE,
+		filters={"parent": doc.gate_pass, "parentfield": SERVICE_ITEMS_FIELD},
+		pluck="name",
+	)
 	for row in service_items:
 		frappe.db.set_value(
-			"Gate Pass Item", row, "custom_waste_inward_date", inward_date,
+			SERVICE_ITEM_DOCTYPE, row, "waste_inward_posting_date", inward_date,
 			update_modified=False,
 		)

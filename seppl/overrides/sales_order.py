@@ -29,8 +29,17 @@ from seppl.overrides.gate_pass import service_rows
 
 
 @frappe.whitelist()
-def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False, args=None):
-	target = _core_make_sales_invoice(source_name, target_doc, ignore_permissions, args)
+def make_sales_invoice(source_name, target_doc=None, args=None, ignore_permissions=False):
+	# Keyword args, and the same parameter order as the core mapper: it takes
+	# (source_name, target_doc, args, ignore_permissions), so passing them
+	# positionally in any other order lands `ignore_permissions` in `args` and
+	# the whitelist type check rejects the bool.
+	target = _core_make_sales_invoice(
+		source_name,
+		target_doc=target_doc,
+		args=args,
+		ignore_permissions=ignore_permissions,
+	)
 	gate_pass = (frappe.flags.args or {}).get("gate_pass")
 	if not gate_pass:
 		return target
@@ -56,9 +65,10 @@ def add_service_charges(target, gate_pass):
 
 
 def service_invoice_row(row, gate_pass):
-	print(row, "rows")
-
-	qty = flt(row.custom_confirm_qty) or flt(row.qty)
+	# `row` is a `Gate Pass Service Item` — its own child doctype, so the
+	# fields have no `custom_` prefix. The Sales Invoice Item side still
+	# does: those are Custom Fields on a standard doctype.
+	qty = flt(row.confirm_qty) or flt(row.qty)
 	return {
 		"item_code": row.item_code,
 		"qty": qty,
@@ -68,6 +78,6 @@ def service_invoice_row(row, gate_pass):
 		# What makes `seppl.overrides.sales_invoice` back-link the Gate Pass
 		# on save, which is also what keeps it out of the next invoice.
 		"custom_gate_pass": gate_pass,
-		"custom_manifest_no": row.custom_manifest_no,
-		"custom_waste_inward_date" : row.custom_waste_inward_date
+		"custom_manifest_no": row.manifest_no,
+		"custom_waste_inward_date": row.waste_inward_posting_date,
 	}
