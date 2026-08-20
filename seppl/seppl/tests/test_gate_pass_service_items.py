@@ -2,28 +2,29 @@
 
 SEPPL raises service charges (transport, manpower, drum disposal fee ...)
 on the same Gate Pass trip that carries the waste. They live in a second
-table, `custom_service_items`, pointing at the same `Gate Pass Item` child
-doctype as the waste table — which is what makes most of the waste table's
-behaviour apply to them for free, and is exactly what these tests pin:
+table, `custom_service_items`, on its own child doctype — `Gate Pass
+Service Item` — so a service charge can carry the fields it needs without
+widening the waste grid, and so the doctype alone already tells the two
+tables apart. What these tests pin:
 
-  • **Rate / qty / amount** are the child doctype's own schema, so they
-    behave exactly as they do on the waste table — a service row IS a
-    `Gate Pass Item`. SEPPL adds nothing on Gate Pass save, and no client
-    handler of its own touches them.
+  • **The table itself** — its child doctype and the Custom Field's module,
+    which is what decides whether a fresh `bench migrate` still has it.
   • **Waste Inward date** is stamped by `seppl.overrides.waste_inward` when
     the Waste Inward is submitted — detox's equivalent loops `doc.items`
     on Gate Pass validate and never reaches this table, and by then the
     Gate Pass is submitted and won't be re-saved anyway.
-  • **The Item picker** (non-stock Items only) and the **Manifest No** copy
-    live in the "Gate Pass - Service Items" Client Script, both scoped to
-    the service table so the waste grid keeps detox's behaviour. These are
-    contract tests over the shipped script — they pin the wiring, not the
-    browser behaviour, which needs a UI walkthrough.
-  • **Billing.** `get_mapped_doc` maps every table whose child doctype has
-    a map, so "Get Items From → Gate Pass" already pulls service rows
-    through detox's own mapper. The one case it doesn't is a child-row
-    selection in the picker, which `seppl.overrides.gate_pass_mapper.
-    with_service_rows` repairs.
+  • **The Item picker** (non-stock Items only), the **Manifest No** copy
+    and the **Create → Sales Invoice** button all live in
+    `seppl/public/js/gate_pass_service_items.js`, shipped through the
+    `doctype_js` hook. They were a Client Script row once, which is a row
+    `bench migrate` never creates: the desk it was typed on billed the
+    service charges and every other site silently billed the waste rows
+    alone. These are contract tests over the shipped file — they pin the
+    wiring, not the browser behaviour, which needs a UI walkthrough.
+  • **Billing.** The Create button maps the SALES ORDER, so nothing typed
+    on the Gate Pass reaches the invoice on its own;
+    `seppl.overrides.sales_order` appends the service rows, and only when
+    the caller names a Gate Pass.
 
 The billing tests drive the wire call the button actually makes —
 `make_mapped_doc` with `args`, which is what puts the Gate Pass on
@@ -31,30 +32,37 @@ The billing tests drive the wire call the button actually makes —
 to Submitted, rather than asserting functions merely exist.
 """
 
+import io
 import json
 
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import flt, getdate, now_datetime, nowdate
 
-from seppl.overrides.gate_pass import SERVICE_ITEMS_FIELD, service_rows
+from seppl.overrides.gate_pass import (
+	SERVICE_ITEM_DOCTYPE,
+	SERVICE_ITEMS_FIELD,
+	service_rows,
+)
 from seppl.overrides.waste_inward import stamp_inward_date_on_service_items
 
 MANIFEST_NO = "MN-SVC-001"
-# The Item Group the "Gate Pass - Service Items" Client Script restricts the
-# service picker to.
-CLIENT_SCRIPT = "Gate Pass - Service Items"
+# The client half ships as a file in the app, loaded on every site through
+# the `doctype_js` hook. It used to be a Client Script row typed into the
+# desk, which is a row a `bench migrate` never creates: the site it was
+# typed on had the button that names the Gate Pass and every other site
+# silently billed the waste rows alone.
+CLIENT_JS = "public/js/gate_pass_service_items.js"
 SO_TO_SALES_INVOICE = "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
 
 
 def client_script_body():
-	"""The shipped Client Script's source.
+	"""The shipped client script's source, read from the app file.
 
-	Read from the DB row, not from `seppl/public/js/`: the row is what the
-	desk actually loads, and a fixture that drifted from the source file
-	would otherwise go unnoticed.
+	This is the file `doctype_js` hands the desk verbatim — Frappe reads it
+	off disk into the form's `__js`, so the file IS what runs.
 	"""
-	return frappe.db.get_value("Client Script", CLIENT_SCRIPT, "script") or ""
+	return io.open(frappe.get_app_path("seppl", *CLIENT_JS.split("/")), encoding="utf-8").read()
 # Building a Gate Pass from scratch on this site means clearing Customer's
 # mandatory PAN / MSME fields and a Server Script that blocks direct Sales
 # Order creation. Hanging the fixture off an Sales Order that already
@@ -131,13 +139,13 @@ class TestGatePassServiceItems(IntegrationTestCase):
 			)
 
 	# ---- 1. The field itself --------------------------------------
-	def test_service_items_is_a_gate_pass_item_table(self):
-		"""Same child doctype as `items` — that is what makes the client
-		handlers, the grid columns and `fetch_from=parent.manifest_no`
-		work on the service table without duplicating any of them."""
+	def test_service_items_is_its_own_child_table(self):
+		"""Its own child doctype, so a service row can carry the fields a
+		service charge needs without widening the waste grid — and so the
+		doctype alone already tells the two tables apart."""
 		df = frappe.get_meta("Gate Pass").get_field(SERVICE_ITEMS_FIELD)
 		self.assertEqual(df.fieldtype, "Table")
-		self.assertEqual(df.options, "Gate Pass Item")
+		self.assertEqual(df.options, SERVICE_ITEM_DOCTYPE)
 
 	def test_service_items_field_is_owned_by_seppl(self):
 		"""Module decides which app's fixture exports it. Anything but
@@ -148,21 +156,14 @@ class TestGatePassServiceItems(IntegrationTestCase):
 			"Seppl",
 		)
 
-	def test_client_script_row_is_present_and_owned_by_seppl(self):
-		"""Module decides which app's fixture exports it — anything but
-		'Seppl' and a fresh migrate loses the whole script."""
-		row = frappe.db.get_value(
-			"Client Script", CLIENT_SCRIPT, ["dt", "view", "enabled", "module"], as_dict=True,
+	def test_client_script_ships_with_the_app(self):
+		"""Registered in `doctype_js`, so every site that installs seppl
+		gets it. A Client Script row typed into one desk does not travel."""
+		self.assertEqual(
+			frappe.get_hooks("doctype_js", app_name="seppl").get("Gate Pass"),
+			[CLIENT_JS],
 		)
-		self.assertIsNotNone(
-			row,
-			f"Client Script {CLIENT_SCRIPT!r} missing. Did seppl's Client "
-			"Script fixture sync on migrate?",
-		)
-		self.assertEqual(row.dt, "Gate Pass")
-		self.assertEqual(row.view, "Form")
-		self.assertEqual(row.enabled, 1)
-		self.assertEqual(row.module, "Seppl")
+		self.assertTrue(client_script_body().strip(), f"{CLIENT_JS} is empty.")
 
 	def test_item_picker_is_restricted_to_service_items(self):
 		"""The query must be scoped to the parent fieldname. Set on the
@@ -180,7 +181,7 @@ class TestGatePassServiceItems(IntegrationTestCase):
 		self.assertIn("manifest_no: function (frm) {", body)
 		self.assertIn(f"{SERVICE_ITEMS_FIELD}_add: function (frm, cdt, cdn) {{", body)
 		self.assertEqual(
-			body.count('"custom_manifest_no", frm.doc.manifest_no'), 2,
+			body.count('"manifest_no", frm.doc.manifest_no'), 2,
 			"Both the header handler and the row-add handler must stamp it.",
 		)
 
@@ -194,16 +195,16 @@ class TestGatePassServiceItems(IntegrationTestCase):
 		)
 
 		stamped = frappe.db.sql_list(
-			"""SELECT custom_waste_inward_date FROM `tabGate Pass Item`
-			   WHERE parent = %s AND parentfield = %s""",
+			f"""SELECT waste_inward_posting_date FROM `tab{SERVICE_ITEM_DOCTYPE}`
+			    WHERE parent = %s AND parentfield = %s""",
 			(gp_name, SERVICE_ITEMS_FIELD),
 		)
 		self.assertEqual(stamped, [inward_date])
 
 	def test_waste_inward_stamp_leaves_the_waste_rows_to_detox(self):
-		"""Reading the rows off the parent doc's own field is what keeps
-		the two tables apart — they share a child doctype, so the waste
-		rows detox's hook owns must not be caught up in this write."""
+		"""The waste rows detox's own hook owns must not be caught up in
+		this write. Separate child doctypes make that structural now; the
+		test stays because the two tables still hang off one parent."""
 		gp_name, _waste, _svc = self.submitted_gate_pass_with_services()
 		waste_rows = frappe.db.sql_list(
 			"""SELECT name FROM `tabGate Pass Item`
@@ -314,7 +315,7 @@ class TestGatePassServiceItems(IntegrationTestCase):
 			"or every later invoice for the Sales Order re-bills the charge.",
 		)
 
-	def test_client_script_names_the_gate_pass_on_the_create_button(self):
+	def test_create_button_names_the_gate_pass(self):
 		"""The server guard is inert unless the button passes this, so the
 		two halves have to stay in step."""
 		body = client_script_body()
@@ -406,11 +407,11 @@ class TestGatePassServiceItems(IntegrationTestCase):
 				"qty": 2,
 				"rate": 1500,
 				"uom": "Nos",
-				"custom_confirm_qty": confirm_qty,
-				# What the "Gate Pass - Service Items" Client Script fills in
-				# on the form. Set here because no browser runs in a test,
-				# and the invoice reads it off the ROW, not off the header.
-				"custom_manifest_no": MANIFEST_NO,
+				"confirm_qty": confirm_qty,
+				# What the shipped client script fills in on the form. Set
+				# here because no browser runs in a test, and the invoice
+				# reads it off the ROW, not off the header.
+				"manifest_no": MANIFEST_NO,
 			})
 		gp.insert(ignore_permissions=True)
 		self.addCleanup(self.discard_gate_pass, gp.name)
