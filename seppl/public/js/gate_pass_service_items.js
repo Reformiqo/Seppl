@@ -13,7 +13,27 @@ frappe.ui.form.on("Gate Pass", {
                 row.doctype, row.name, "manifest_no", frm.doc.manifest_no
             );
         });
-    }
+    },
+
+    refresh: function (frm) {
+        if (frm.doc.docstatus !== 1) return;
+        if (!frm.doc.sales_order || frm.doc.sales_invoice) return;
+        if (frm.doc.transaction_type !== "Inbound (Waste Receipt)") return;
+
+        frm.remove_custom_button(__("Create Sales Invoice"), __("Create"));
+        frm.add_custom_button(
+            __("Create Sales Invoice"),
+            function () {
+                frappe.model.open_mapped_doc({
+                    method: "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice",
+                    frm: frm,
+                    source_name: frm.doc.sales_order,
+                    args: { gate_pass: frm.doc.name },
+                });
+            },
+            __("Create")
+        );
+    },
 });
 
 
