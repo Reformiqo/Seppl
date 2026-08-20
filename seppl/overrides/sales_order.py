@@ -30,10 +30,6 @@ from seppl.overrides.gate_pass import service_rows
 
 @frappe.whitelist()
 def make_sales_invoice(source_name, target_doc=None, args=None, ignore_permissions=False):
-	# Keyword args, and the same parameter order as the core mapper: it takes
-	# (source_name, target_doc, args, ignore_permissions), so passing them
-	# positionally in any other order lands `ignore_permissions` in `args` and
-	# the whitelist type check rejects the bool.
 	target = _core_make_sales_invoice(
 		source_name,
 		target_doc=target_doc,
