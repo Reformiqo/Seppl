@@ -13,6 +13,11 @@ frappe.ui.form.on("Gate Pass", {
                 row.doctype, row.name, "manifest_no", frm.doc.manifest_no
             );
         });
+        (frm.doc["items"] || []).forEach(function (row) {
+            frappe.model.set_value(
+                row.doctype, row.name, "custom_manifest_no", frm.doc.manifest_no
+            );
+        });
     },
 
     refresh: function (frm) {
@@ -35,6 +40,13 @@ frappe.ui.form.on("Gate Pass", {
         );
     },
 });
+
+
+frappe.ui.form.on('Gate Pass Item', {
+    items_add: function (frm, cdt, cdn) {
+        frappe.model.set_value(cdt, cdn, "custom_manifest_no", frm.doc.manifest_no);
+    },
+})
 
 
 frappe.ui.form.on("Gate Pass Service Item", {
