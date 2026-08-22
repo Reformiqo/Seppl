@@ -21,10 +21,14 @@ tables apart. What these tests pin:
     service charges and every other site silently billed the waste rows
     alone. These are contract tests over the shipped file — they pin the
     wiring, not the browser behaviour, which needs a UI walkthrough.
-  • **Billing.** The Create button maps the SALES ORDER, so nothing typed
-    on the Gate Pass reaches the invoice on its own;
-    `seppl.overrides.sales_order` appends the service rows, and only when
-    the caller names a Gate Pass.
+  • **Billing**, on both routes to an invoice, because neither maps the
+    service table on its own. The Gate Pass form's Create button maps the
+    SALES ORDER, so nothing typed on the Gate Pass reaches the invoice —
+    `seppl.overrides.sales_order` appends the rows, and only when the
+    caller names a Gate Pass. Sales Invoice → Get Items From → Gate Pass
+    maps the GATE PASS, but through detox's mapper, which walks
+    `Gate Pass Item` alone — `seppl.overrides.gate_pass_mapper` appends
+    them inside the picker's loop, once per Gate Pass selected.
 
 The billing tests drive the wire call the button actually makes —
 `make_mapped_doc` with `args`, which is what puts the Gate Pass on
@@ -44,6 +48,7 @@ from seppl.overrides.gate_pass import (
 	SERVICE_ITEMS_FIELD,
 	service_rows,
 )
+from seppl.overrides.gate_pass_mapper import GATE_PASS_TO_SALES_INVOICE
 from seppl.overrides.waste_inward import stamp_inward_date_on_service_items
 
 MANIFEST_NO = "MN-SVC-001"
@@ -325,6 +330,98 @@ class TestGatePassServiceItems(IntegrationTestCase):
 			"detox's button must be replaced, not duplicated alongside ours.",
 		)
 
+	# ---- 4. Billing via Sales Invoice → Get Items From → Gate Pass --
+	# The other route to an invoice. It maps the GATE PASS (detox's mapper),
+	# not the Sales Order — and that mapper walks `Gate Pass Item` alone, so
+	# the service table is invisible to it. `seppl.overrides.gate_pass_mapper`
+	# sits in the picker's map_docs loop and appends the rows there.
+	def test_picker_bills_the_gate_pass_service_charges(self):
+		gp_name, _waste_item, svc_item = self.submitted_gate_pass_with_services()
+
+		si = self.invoice_from_picker(gp_name)
+
+		svc_rows = [row for row in si.items if row.item_code == svc_item]
+		self.assertEqual(
+			len(svc_rows), 1,
+			"Get Items From → Gate Pass maps `Gate Pass Item` only, so the "
+			"service charge appears exactly once — and only if seppl "
+			"appended it.",
+		)
+		self.assertEqual(flt(svc_rows[0].qty), 2.0)
+		self.assertEqual(flt(svc_rows[0].rate), 1500.0)
+		self.assertEqual(flt(svc_rows[0].amount), 3000.0)
+
+	def test_picker_service_row_carries_its_gate_pass(self):
+		"""Same back-link the waste rows get: it is what claims the Gate
+		Pass on save, and so what keeps the charge off the next invoice."""
+		gp_name, _waste_item, svc_item = self.submitted_gate_pass_with_services()
+		si = self.invoice_from_picker(gp_name)
+		svc_row = next(row for row in si.items if row.item_code == svc_item)
+		self.assertEqual(svc_row.get("custom_gate_pass"), gp_name)
+		self.assertEqual(svc_row.get("custom_manifest_no"), MANIFEST_NO)
+
+	def test_picker_service_charge_lands_in_the_totals(self):
+		"""Appending happens after the mapper already totalled the doc, so
+		the totals have to be recomputed or the charge is invisible."""
+		gp_name, _waste_item, _svc = self.submitted_gate_pass_with_services()
+		si = self.invoice_from_picker(gp_name)
+		self.assertEqual(flt(si.net_total), sum(flt(row.amount) for row in si.items))
+
+	def test_picker_confirm_qty_wins_over_gate_qty(self):
+		"""Same rule the waste rows follow: the qty typed at the gate is
+		what arrived, the confirmed qty is what finance bills."""
+		gp_name, _waste_item, svc_item = self.submitted_gate_pass_with_services(
+			confirm_qty=1.5
+		)
+		si = self.invoice_from_picker(gp_name)
+		svc_row = next(row for row in si.items if row.item_code == svc_item)
+		self.assertEqual(flt(svc_row.qty), 1.5)
+		self.assertEqual(flt(svc_row.amount), 2250.0)
+
+	def test_picker_bills_every_selected_gate_passs_own_charges(self):
+		"""The picker aggregates many Gate Passes into one invoice. Each
+		must contribute its own service rows, stamped with its own name —
+		appending inside the loop is the only place that is still known."""
+		first, _wi, svc_item = self.submitted_gate_pass_with_services()
+		second, _wi2, _svc2 = self.submitted_gate_pass_with_services(
+			manifest_no=MANIFEST_NO + "-B"
+		)
+
+		si = self.invoice_from_picker(first, second)
+
+		stamped = sorted(
+			row.get("custom_gate_pass")
+			for row in si.items
+			if row.item_code == svc_item and row.get("custom_gate_pass")
+		)
+		self.assertEqual(stamped, sorted([first, second]))
+		# And the last Gate Pass's rows are totalled too — the recompute
+		# runs after the loop, not inside it.
+		self.assertEqual(flt(si.net_total), sum(flt(row.amount) for row in si.items))
+
+	def test_picker_leaves_a_gate_pass_without_service_rows_alone(self):
+		"""Most Gate Passes carry no service charge. Those invoices must
+		come out byte-for-byte what detox's mapper built."""
+		gp_name, waste_item, svc_item = self.submitted_gate_pass_with_services(
+			with_services=False
+		)
+		si = self.invoice_from_picker(gp_name)
+		self.assertNotIn(svc_item, [row.item_code for row in si.items])
+		self.assertEqual([row.item_code for row in si.items], [waste_item])
+
+	def invoice_from_picker(self, *gate_passes):
+		"""Drive the wire call "Get Items From → Gate Pass" actually makes.
+
+		The picker posts the whole selection to `frappe.model.mapper.map_docs`
+		in one request, JSON-encoding every argument — which is the override
+		seppl registers, and the loop the service rows are appended in.
+		"""
+		from seppl.overrides.gate_pass_mapper import map_docs
+
+		return map_docs(
+			GATE_PASS_TO_SALES_INVOICE, frappe.as_json(list(gate_passes)), None
+		)
+
 	def invoice_from_sales_order(self, sales_order, gate_pass=None):
 		"""Drive the real wire call the Create button makes.
 
@@ -343,7 +440,9 @@ class TestGatePassServiceItems(IntegrationTestCase):
 		)
 
 	# ---- fixture ---------------------------------------------------
-	def submitted_gate_pass_with_services(self, confirm_qty=0, with_services=True):
+	def submitted_gate_pass_with_services(
+		self, confirm_qty=0, with_services=True, manifest_no=MANIFEST_NO
+	):
 		"""A Gate Pass walked to Submitted through the real workflow.
 
 		Reuses the detox Gate Pass suite's helpers so the document passes
@@ -389,7 +488,9 @@ class TestGatePassServiceItems(IntegrationTestCase):
 			"vehicle_exit_time": now_datetime(),
 			"document_review_status": "Accepted",
 			"date": nowdate(),
-			"manifest_no": MANIFEST_NO,
+			# Unique per Gate Pass: a submitted Gate Pass already holding
+			# this manifest number blocks the next one from saving.
+			"manifest_no": manifest_no,
 			# No `sales_order_item` on the row: this Gate Pass is not
 			# consuming a Sales Order line, so the pending-qty and
 			# rate-consistency checks (both keyed on that link) stay out
@@ -411,7 +512,7 @@ class TestGatePassServiceItems(IntegrationTestCase):
 				# What the shipped client script fills in on the form. Set
 				# here because no browser runs in a test, and the invoice
 				# reads it off the ROW, not off the header.
-				"manifest_no": MANIFEST_NO,
+				"manifest_no": manifest_no,
 			})
 		gp.insert(ignore_permissions=True)
 		self.addCleanup(self.discard_gate_pass, gp.name)

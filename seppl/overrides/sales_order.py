@@ -19,13 +19,16 @@ what the "Gate Pass - Service Items" Client Script adds to the button.
 """
 
 import frappe
-from frappe.utils import flt
 
 from erpnext.selling.doctype.sales_order.sales_order import (
 	make_sales_invoice as _core_make_sales_invoice,
 )
 
-from seppl.overrides.gate_pass import service_rows
+from seppl.overrides.gate_pass import (
+	append_service_charges,
+	recalculate,
+	service_invoice_row,  # noqa: F401  (re-exported: imported from here historically)
+)
 
 
 @frappe.whitelist()
@@ -36,13 +39,39 @@ def make_sales_invoice(source_name, target_doc=None, args=None, ignore_permissio
 		args=args,
 		ignore_permissions=ignore_permissions,
 	)
-	gate_pass = (frappe.flags.args or {}).get("gate_pass")
+	gate_pass = requested_gate_pass(source_name)
 	if not gate_pass:
 		return target
 
 	stamp_gate_pass_on_mapped_rows(target, gate_pass)
 	add_service_charges(target, gate_pass)
 	return target
+
+
+def requested_gate_pass(sales_order):
+	"""The Gate Pass the caller named, once it has earned being trusted.
+
+	`None` — meaning "behave exactly like core" — unless a Gate Pass was
+	named AND it survives being re-checked against the database. The name
+	arrives from the browser, so nothing about it is taken on faith:
+
+	  • it must belong to THIS Sales Order. Billing another order's
+	    charges here would be worse than billing none.
+	  • it must not already name a Sales Invoice. Without that, every
+	    later invoice raised for the Sales Order re-bills the same
+	    charge. Blunt truthiness on purpose — the same check detox's Gate
+	    Pass mapper makes before it will map a Gate Pass at all.
+	"""
+	gate_pass = (frappe.flags.args or {}).get("gate_pass")
+	if not gate_pass:
+		return None
+
+	source = frappe.db.get_value(
+		"Gate Pass", gate_pass, ["sales_order", "sales_invoice"], as_dict=True
+	)
+	if not source or source.sales_order != sales_order or source.sales_invoice:
+		return None
+	return gate_pass
 
 
 def stamp_gate_pass_on_mapped_rows(target, gate_pass):
@@ -73,35 +102,10 @@ def stamp_gate_pass_on_mapped_rows(target, gate_pass):
 
 
 def add_service_charges(target, gate_pass):
-	rows = service_rows(gate_pass)
-	if not rows:
-		return
+	"""The Gate Pass's service rows, appended and totalled into `target`.
 
-	for row in rows:
-		target.append("items", service_invoice_row(row, gate_pass))
-
-	# The rows arrive after the mapper has already run these, so the new
-	# ones would otherwise carry no income account, no tax template and no
-	# share of the totals.
-	target.flags.ignore_permissions = True
-	target.run_method("set_missing_values")
-	target.run_method("calculate_taxes_and_totals")
-
-
-def service_invoice_row(row, gate_pass):
-	# `row` is a `Gate Pass Service Item` — its own child doctype, so the
-	# fields have no `custom_` prefix. The Sales Invoice Item side still
-	# does: those are Custom Fields on a standard doctype.
-	qty = flt(row.confirm_qty) or flt(row.qty)
-	return {
-		"item_code": row.item_code,
-		"qty": qty,
-		"uom": row.uom,
-		"rate": row.rate,
-		"amount": qty * flt(row.rate),
-		# What makes `seppl.overrides.sales_invoice` back-link the Gate Pass
-		# on save, which is also what keeps it out of the next invoice.
-		"custom_gate_pass": gate_pass,
-		"custom_manifest_no": row.manifest_no,
-		"custom_waste_inward_date": row.waste_inward_posting_date,
-	}
+	The single-Gate-Pass case. The picker path appends for several Gate
+	Passes before totalling once — see `seppl.overrides.gate_pass_mapper`.
+	"""
+	if append_service_charges(target, gate_pass):
+		recalculate(target)

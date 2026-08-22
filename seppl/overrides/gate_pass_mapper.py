@@ -1,4 +1,4 @@
-"""Stamp the source Gate Pass onto every row pulled into a Sales Invoice.
+"""Gate Pass → Sales Invoice: stamp the source, and bill its service charges.
 
 Sales Invoice → Get Items From → Gate Pass opens a multi-select picker and
 maps the chosen Gate Passes into the invoice. The mapper that does the work
@@ -11,6 +11,17 @@ we still know which Gate Pass produced which rows — information the mapper's
 return value alone no longer carries once several Gate Passes have been
 merged into one invoice.
 
+Sitting in that loop buys two things:
+
+  • the Gate Pass stamp on the rows it produced, and
+  • the Gate Pass's SERVICE charges. `Gate Pass.custom_service_items` is
+    a second table on its own child doctype, so detox's Gate Pass →
+    Sales Invoice mapper — which maps `Gate Pass Item` alone — never
+    sees it. Get Items From → Gate Pass billed the waste rows and
+    silently dropped transport / manpower / drum charges. The Gate Pass
+    form's own Create → Sales Invoice button has appended them since
+    `seppl.overrides.sales_order`; this brings the picker into line.
+
 Every other mapping on the site (Sales Order → Delivery Note, Quotation →
 Sales Order, …) is handed straight back to the core implementation.
 """
@@ -20,6 +31,8 @@ import json
 import frappe
 from frappe import _
 from frappe.model.mapper import map_docs as _core_map_docs
+
+from seppl.overrides.gate_pass import append_service_charges, recalculate
 
 GATE_PASS_TO_SALES_INVOICE = (
 	"detox_waste_management.detox_waste_management.doctype.gate_pass.gate_pass.make_sales_invoice"
@@ -33,7 +46,8 @@ def map_docs(
 	target_doc: str | None = None,
 	args: str | None = None,
 ):
-	"""Core `map_docs`, plus a Gate Pass stamp on the rows it produces.
+	"""Core `map_docs`, plus a Gate Pass stamp on the rows it produces
+	and that Gate Pass's service charges.
 
 	Hints mirror what actually arrives over the wire — the picker's
 	`frappe.call` JSON-encodes every argument, so `source_names` is a JSON
@@ -50,12 +64,23 @@ def map_docs(
 	if isinstance(source_names, str):
 		source_names = json.loads(source_names)
 
+	appended = 0
 	for source_name in source_names:
 		mapper_args = (source_name, target_doc, json.loads(args)) if args else (source_name, target_doc)
 		target_doc = mapper(*mapper_args)
 		# Rows the previous iterations already claimed keep their own Gate
 		# Pass; whatever is still blank was produced by THIS source.
 		stamp_source_gate_pass(target_doc, source_name)
+		# Service charges belong to the trip, not to a waste line, so they
+		# are not among the rows the picker offers to tick — every Gate
+		# Pass pulled in brings all of its own.
+		appended += append_service_charges(target_doc, source_name)
+
+	# Once, after the last source: the mapper totals the invoice on every
+	# pass, so only the rows appended on the final pass would be missing
+	# their income account, tax template and share of the totals.
+	if appended:
+		recalculate(target_doc)
 
 	return target_doc
 
