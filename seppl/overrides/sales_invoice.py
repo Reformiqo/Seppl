@@ -128,3 +128,120 @@ def backfill_gate_pass_from_manifest(doc):
 		)
 		if len(matches) == 1:
 			row.custom_gate_pass = matches[0]
+
+
+# ----------------------------------------------------------------------
+# ABP2-I406 — multi-project / multi-cost-centre invoicing
+# ----------------------------------------------------------------------
+def validate_multi_project_mapping(doc, method=None):
+	"""One invoice, many Sub Projects — BRD §3.2, FR-01 … FR-07.
+
+	Most of what the BRD asks for is already in ERPNext and needs no code:
+	`Sales Invoice Item` carries its own `project` and `cost_center`
+	(mandatory), and the income GL entry is written per line against
+	`item.cost_center` / `item.project`. So the revenue split by line
+	(FR-06) is native — what was missing is the hierarchy that decides
+	WHICH projects may appear together on one invoice.
+
+	This adds that, and nothing more:
+
+	  FR-01  a Group Project on the header, and it must really be one
+	  FR-02  every line names a Sub Project
+	  FR-03  each line carries its Group Project, stamped from the header
+	  FR-07  blank Sub Project or Cost Centre blocks the invoice
+	  §3.3   every line's Sub Project belongs to the header's Group Project
+
+	Backward compatibility (NFR) is the reason for the early return: an
+	invoice that names no Group Project and no Sub Project is an ordinary
+	single-project invoice and is left completely alone.
+	"""
+	from seppl.overrides.project import group_project_of, is_group_project
+
+	rows = doc.get("items") or []
+	group_project = doc.get("custom_group_project")
+
+	# One lookup per distinct project, not one per row (NFR — performance).
+	groups = {}
+	for row in rows:
+		project = row.get("project")
+		if project and project not in groups:
+			groups[project] = group_project_of(project)
+
+	sub_project_rows = [r for r in rows if groups.get(r.get("project"))]
+
+	if not group_project and not sub_project_rows:
+		return
+
+	if not group_project:
+		# FR-01 — a line already names a Sub Project, so the header has to
+		# say which Group Project this invoice is for.
+		row = sub_project_rows[0]
+		frappe.throw(
+			_(
+				"Row #{0}: {1} is a Sub Project of Group Project {2}. Select "
+				"that Group Project on the invoice header before billing it."
+			).format(row.idx, row.project, groups[row.project]),
+			title=_("Group Project required"),
+		)
+
+	if not is_group_project(group_project):
+		frappe.throw(
+			_(
+				"{0} is not a Group Project. Only a project marked Is Group "
+				"Project can be selected here."
+			).format(group_project),
+			title=_("Not a Group Project"),
+		)
+
+	# The header Project is the single-project mode: it feeds every line that
+	# has no project of its own, and it is what the ABP2-I273 script filters
+	# the line Cost Centre lookup by. Mixing the two modes is what makes a
+	# multi-project invoice post to the wrong cost centres.
+	if doc.get("project"):
+		frappe.throw(
+			_(
+				"This invoice uses Group Project {0}, so each line carries its "
+				"own Sub Project. Clear the Project field on the header — it "
+				"applies to single-project invoices only."
+			).format(group_project),
+			title=_("Header Project not allowed"),
+		)
+
+	for row in rows:
+		# FR-07 (b) and (c)
+		if not row.get("project"):
+			frappe.throw(
+				_("Row #{0}: Sub Project is required on every line of a multi-project invoice.").format(row.idx),
+				title=_("Sub Project required"),
+			)
+		if not row.get("cost_center"):
+			frappe.throw(
+				_("Row #{0}: Cost Centre is required on every line of a multi-project invoice.").format(row.idx),
+				title=_("Cost Centre required"),
+			)
+
+		row_group = groups.get(row.project)
+		if not row_group:
+			frappe.throw(
+				_(
+					"Row #{0}: {1} is not a Sub Project. Open it and set its "
+					"Group Project to {2}, or pick a Sub Project that already "
+					"belongs to {2}."
+				).format(row.idx, row.project, group_project),
+				title=_("Not a Sub Project"),
+			)
+
+		# §3.3 — one invoice, one Group Project.
+		if row_group != group_project:
+			frappe.throw(
+				_(
+					"Row #{0}: {1} belongs to Group Project {2}, but this "
+					"invoice is for {3}. Sub Projects from different Group "
+					"Projects cannot share an invoice — raise a separate "
+					"invoice for {2}."
+				).format(row.idx, row.project, row_group, group_project),
+				title=_("Mixed Group Projects"),
+			)
+
+		# FR-03 — the line's Group Project is inherited, never typed.
+		row.custom_group_project = group_project

@@ -44,7 +44,14 @@ app_license = "mit"
 
 # include js in doctype views
 doctype_js = {
-    "Gate Pass" : "public/js/gate_pass_service_items.js"
+    "Gate Pass" : "public/js/gate_pass_service_items.js",
+    # ABP2-I406 — Group Project on the header, Sub Project + Cost Centre
+    # per line. Filtered lookups and defaults only; the rules themselves
+    # are enforced in seppl.overrides.sales_invoice.
+    "Sales Invoice": "public/js/sales_invoice_multi_project.js",
+    # ABP2-I406 — only a Group Project can be a parent, so that is all the
+    # Project master's own lookup offers.
+    "Project": "public/js/project_group_hierarchy.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -162,11 +169,20 @@ doc_events = {
 	"Waste Inward": {
 		"on_submit": "seppl.overrides.waste_inward.on_submit",
 	},
+	# ABP2-I406 — the Group Project / Sub Project hierarchy lives on the
+	# Project master, so its two-level rules are enforced there.
+	"Project": {
+		"validate": "seppl.overrides.project.validate",
+	},
 	"Sales Invoice": {
 		# Resolve a Gate Pass for any row that carries a Manifest No but
 		# no Gate Pass yet — invoices predating the picker stamp, or an
 		# ERPNext release that maps through some other core method.
 		"before_validate": "seppl.overrides.sales_invoice.before_validate",
+		# ABP2-I406 — one invoice, many Sub Projects: every line must name a
+		# Sub Project of the header's Group Project. Silent on invoices that
+		# use neither, so single-project billing is untouched.
+		"validate": "seppl.overrides.sales_invoice.validate_multi_project_mapping",
 		# Back-link every Gate Pass billed here as soon as the DRAFT is
 		# saved, not only at submit: the picker hides Gate Passes that
 		# already carry a sales_invoice, so linking at save time is what
