@@ -97,15 +97,16 @@ doctype_js = {
 # module so `bench export-fixtures` picks them up here rather than into
 # whichever app happens to own the doctype.
 #
-# This list is the single source of truth for SEPPL's schema: build the
-# field in the UI, set its Module to "Seppl", run `bench export-fixtures`
-# and commit the JSON. Do NOT also declare the same field in Python —
-# after_migrate runs AFTER the fixture sync, so a code definition would
-# silently overwrite whatever was last exported.
+# Fields whose only reader is SEPPL code are declared in `setup.py` instead,
+# so the definition travels with the logic. A field belongs to exactly one of
+# the two — never both: after_migrate runs AFTER the fixture sync, so a field
+# in both would have setup.py silently win.
 
 fixtures = [
 	{"dt": "Custom Field", "filters": [["module", "=", "Seppl"]]},
 ]
+
+after_migrate = "seppl.setup.create_custom_fields"
 
 # Installation
 # ------------
